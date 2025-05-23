@@ -229,6 +229,17 @@ definitions:
       - type: CustomTransformation
         class_name: source_hubspot.components.HubspotRenamePropertiesTransformation
 
+  companies_archived_schema_loader:
+    $ref: "#/definitions/base_dynamic_schema_loader"
+    retriever:
+      $ref: "#/definitions/base_dynamic_schema_loader/retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /properties/v2/company/properties
+    schema_transformations:
+      - type: CustomTransformation
+        class_name: source_hubspot.components.HubspotRenamePropertiesTransformation
+
   forms_schema_loader:
     $ref: "#/definitions/base_dynamic_schema_loader"
     retriever:
@@ -1491,6 +1502,79 @@ definitions:
             $ref: "#/schemas/companies"
         - $ref: "#/definitions/base_dynamic_schema_loader"
 
+  companies_archived_stream:
+    primary_key:
+      - id
+    $ref: "#/definitions/stream_base"
+    name: companies_archived
+    retriever:
+      $ref: "#/definitions/base_retriever"
+      requester:
+        $ref: "#/definitions/base_requester"
+        path: /crm/v3/objects/companies
+        request_parameters:
+          associations: "['contacts']"
+          archived: "true"
+          properties:
+            type: QueryProperties
+            property_list:
+              type: PropertiesFromEndpoint
+              property_field_path:
+                - name
+              retriever:
+                type: SimpleRetriever
+                requester:
+                  $ref: "#/definitions/base_requester"
+                  path: /properties/v2/company/properties
+                decoder:
+                  type: JsonDecoder
+                record_selector:
+                  type: RecordSelector
+                  extractor:
+                    type: DpathExtractor
+                    field_path: []
+            property_chunking:
+              type: PropertyChunking
+              property_limit_type: characters
+              property_limit: 15000
+              record_merge_strategy:
+                type: GroupByKeyMergeStrategy
+                key: id
+      paginator:
+        $ref: "#/definitions/cursor_paginator"
+      record_selector:
+        type: RecordSelector
+        extractor:
+          type: DpathExtractor
+          field_path:
+            - results
+        schema_normalization:
+          type: CustomSchemaNormalization
+          class_name: source_hubspot.components.EntitySchemaNormalization
+    transformations:
+      - type: AddFields
+        fields:
+          - path: ["archivedAt"]
+            value: "{{ record.get('archivedAt') or record['createdAt'] }}"
+      - type: DpathFlattenFields
+        field_path: ["properties"]
+        key_transformation:
+          type: KeyTransformation
+          prefix: properties_
+    incremental_sync:
+      $ref: "#/definitions/incremental_sync"
+      cursor_field: archivedAt
+      is_client_side_incremental: true
+    state_migrations:
+      - type: CustomStateMigration
+        class_name: source_hubspot.components.MigrateEmptyStringState
+        cursor_field: archivedAt
+    schema_loader:
+      - $ref: "#/definitions/companies_archived_schema_loader"
+      - type: InlineSchemaLoader
+        schema:
+          $ref: "#/schemas/companies_archived"
+
   engagements_calls_stream:
     type: StateDelegatingStream
     full_refresh_stream: "#/definitions/base_crm_search_full_refresh_stream"
@@ -1896,6 +1980,7 @@ definitions:
 
 streams:
   - "#/definitions/campaigns_stream"
+  - "#/definitions/companies_archived_stream"
   - "#/definitions/companies_stream"
   - "#/definitions/companies_property_history_stream"
   - "#/definitions/contact_lists_stream"
@@ -2387,6 +2472,53 @@ schemas:
         type:
           - "null"
           - boolean
+
+  companies_archived:
+    $schema: http://json-schema.org/draft-07/schema#
+    type:
+      - "null"
+      - object
+    additionalProperties: true
+    properties:
+      id:
+        description: Unique identifier for the company
+        type:
+          - "null"
+          - string
+      createdAt:
+        description: Date and time when the company was created
+        type:
+          - "null"
+          - string
+        format: date-time
+        __ab_apply_cast_datetime: false
+      updatedAt:
+        description: Date and time when the company was last updated
+        type:
+          - "null"
+          - string
+        format: date-time
+        __ab_apply_cast_datetime: false
+      archived:
+        description: Indicates whether the company is archived or active
+        type:
+          - "null"
+          - boolean
+      archivedAt:
+        description: The date and time when the company was archived
+        type:
+          - "null"
+          - string
+        format: date-time
+        __ab_apply_cast_datetime: false
+      contacts:
+        description: List of contacts associated with the company
+        type:
+          - "null"
+          - array
+        items:
+          description: Details of individual contacts
+          type: string
 
   contacts:
     $schema: "http://json-schema.org/draft-07/schema#"
